@@ -36,7 +36,7 @@ GH_API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ["GITHUB_REPOSITORY"]
 GH_TOKEN = os.environ["GITHUB_TOKEN"]
 MODEL = os.environ.get("GATE_MODEL") or "claude-sonnet-4-5"
-MODE = os.environ.get("GATE_MODE") or "pr"
+MODE = "pr"  # se resuelve por PR en resolve_mode()
 BOOKMARK_BRANCH = "comprehension-bookmarks"
 
 
@@ -282,8 +282,17 @@ def pr_diff(pr, base=None):
     return diff
 
 
+def resolve_mode(pr):
+    """GATE_MODE manda. Si no está, las PRs contra la rama `bookmark` usan la variante 2."""
+    global MODE
+    bases = (os.environ.get("GATE_BOOKMARK_BASES") or "bookmark").split(",")
+    MODE = os.environ.get("GATE_MODE") or ("bookmark" if pr["base"]["ref"] in bases else "pr")
+    print(f"Modo: {MODE}")
+
+
 def on_pull_request(event):
     pr = event["pull_request"]
+    resolve_mode(pr)
     sha, num = pr["head"]["sha"], pr["number"]
     set_status(sha, "pending", "Generando preguntas sobre el cambio...")
     base, scope = diff_range(pr)
@@ -334,6 +343,7 @@ def on_issue_comment(event):
     pr = gh("GET", f"/repos/{REPO}/pulls/{num}")
     if pr["state"] != "open":
         return print("PR cerrada.")
+    resolve_mode(pr)
     user = cmt["user"]["login"]
     if MODE == "bookmark" and user != pr["user"]["login"]:
         return print("En modo bookmark solo responde el autor de la PR (el bookmark es suyo).")
