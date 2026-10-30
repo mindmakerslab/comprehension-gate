@@ -1,0 +1,9 @@
+{
+  "direccion": {"pais": "ES", "codigo_postal": "28004"},
+  "cupones": ["BIENVENIDA10", "MENOS5"],
+  "lineas": [
+    {"sku": "CAF-01", "nombre": "Café de especialidad", "precio": "12.40", "peso_kg": "1", "categoria": "alimentacion", "cantidad": 2},
+    {"sku": "LIB-07", "nombre": "Libro de cocina", "precio": "24.00", "peso_kg": "0.8", "categoria": "libros"},
+    {"sku": "MOL-02", "nombre": "Molinillo", "precio": "39.90", "peso_kg": "1.6"}
+  ]
+}

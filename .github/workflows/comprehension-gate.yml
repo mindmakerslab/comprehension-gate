@@ -1,0 +1,53 @@
+name: comprehension-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  # write solo hace falta para la variante bookmark (guarda bookmarks en la rama
+  # comprehension-bookmarks). Si solo usas el gate por PR, déjalo en read.
+  contents: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: comprehension-gate-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Solo actúa en PRs de alguien de GATE_USERS (lista separada por comas) y, en
+    # issue_comment, solo si también comenta alguien de la lista. Las PRs que abre el
+    # agente (agent-pr.yml, autor github-actions[bot]) se aceptan y van en modo merger. En un repo público
+    # evita que cualquiera gaste la API. Fuera de la lista no se publica ningún status.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.pull_request.user.login))) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       (github.event.issue.user.login == 'github-actions[bot]' ||
+        contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.issue.user.login))) &&
+       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.comment.user.login)))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Instalar Claude Code (solo si hay token de suscripción)
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then npm install -g @anthropic-ai/claude-code; fi
+      - name: Comprehension gate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GATE_MODEL: ${{ vars.GATE_MODEL }}
+          GATE_MODE: ${{ vars.GATE_MODE }}
+          GATE_TARGET: ${{ vars.GATE_TARGET }}
+        run: python3 .github/scripts/gate.py

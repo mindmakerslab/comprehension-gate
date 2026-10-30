@@ -1,0 +1,21 @@
+{
+  "name": "mindmakerslab",
+  "owner": {
+    "name": "Mindmakers Lab"
+  },
+  "metadata": {
+    "description": "Skills de Mindmakers Lab contra la deuda cognitiva."
+  },
+  "plugins": [
+    {
+      "name": "comprehension-gate",
+      "source": "./plugins/comprehension-gate",
+      "description": "Antes de mergear, Claude te examina sobre el cambio: tres preguntas, sin revelar las respuestas."
+    },
+    {
+      "name": "comprehension-bookmarks",
+      "source": "./plugins/comprehension-bookmarks",
+      "description": "Marcador de entendimiento: recuerda hasta qué commit entiendes el código y te examina de todo lo que ha cambiado desde ahí."
+    }
+  ]
+}
