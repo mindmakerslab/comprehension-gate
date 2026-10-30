@@ -197,6 +197,18 @@ def latest_state(comments, sha):
     return questions, approved
 
 
+def as_list(value):
+    """Algunos modelos devuelven el array como string JSON o como texto con saltos de línea."""
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        try:
+            return as_list(json.loads(value))
+        except ValueError:
+            return [re.sub(r"^\s*\d+[.)]\s*", "", l).strip() for l in value.splitlines() if l.strip()]
+    return []
+
+
 def numbered(qs):
     return "\n".join(f"{i}. {q}" for i, q in enumerate(qs, 1))
 
@@ -229,7 +241,9 @@ laterales, y un escenario "¿qué pasaría si...?" con un caso límite real del 
 funciones, ficheros o valores concretos. Nada de preguntas genéricas ni de sí/no. No des pistas
 de la respuesta."""
     out = call_llm(prompt, QUESTIONS_TOOL)
-    qs = out["preguntas"][:3]
+    qs = as_list(out.get("preguntas"))[:3]
+    if len(qs) < 3:
+        raise RuntimeError(f"El modelo no devolvió 3 preguntas: {out}")
     body = (
         f"### Comprehension gate\n\n{out['resumen']}\n\n"
         f"Antes de mergear, contesta en un comentario a estas preguntas con tus palabras:\n\n{numbered(qs)}\n\n"
@@ -280,14 +294,14 @@ redacción perfecta ni longitud: una respuesta breve y correcta aprueba; una vag
 incorrecta o que no responde a alguna pregunta, no. Si no aprueba, explica qué falta sin dar
 la respuesta y repregunta solo sobre lo que falló."""
     v = call_llm(prompt, VERDICT_TOOL)
-    if v["aprobado"]:
+    if v.get("aprobado") in (True, "true", "True"):
         body = (f"### Comprehension gate: aprobado\n\n@{user} {v['feedback']}\n\n"
                 f"Check `{CONTEXT}` en verde para `{sha[:7]}`.\n\n"
                 + marker(MARK_V, sha, {"aprobado": True}))
         c = comment(num, body)
         set_status(sha, "success", f"{user} demuestra que entiende el cambio", c["html_url"])
     else:
-        nq = (v.get("nuevas_preguntas") or questions)[:3]
+        nq = (as_list(v.get("nuevas_preguntas")) or questions)[:3]
         body = (f"### Comprehension gate: todavía no\n\n@{user} {v['feedback']}\n\n"
                 f"Contesta de nuevo en otro comentario:\n\n{numbered(nq)}\n\n"
                 + marker(MARK_V, sha, {"aprobado": False}) + "\n" + marker(MARK_Q, sha, {"preguntas": nq}))
