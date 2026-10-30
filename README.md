@@ -86,7 +86,8 @@ JSON
 
 - Usa commit statuses y no check runs: así el job que se dispara con `issue_comment` puede marcar el head SHA de la PR.
 - Las preguntas viajan en un comentario oculto (`<!-- comprehension-gate:questions sha=... -->`) dentro del comentario del bot. Al evaluar, se usan las últimas preguntas publicadas para el head SHA actual; por eso un push nuevo deja la aprobación anterior sin efecto.
-- Solo cuenta la respuesta del autor de la PR o de alguien con permiso write. Los comentarios de otros y del bot se ignoran.
+- A quién se examina lo decide la variable `GATE_TARGET`. Con `author` (por defecto en main) solo cuenta el autor de la PR, útil cuando la ha generado un agente que él lanzó. Con `merger` (por defecto en la rama `bookmark`) cualquiera con permiso write contesta por su cuenta y el check pasa en cuanto uno demuestra que entiende el cambio.
+- El gate solo actúa en PRs de las personas de `GATE_USERS` (lista separada por comas, por defecto `double-thinker`) y solo atiende comentarios de esa lista. En un repo público evita que cualquiera gaste tu API. Cámbiala con `gh variable set GATE_USERS -R mi-org/mi-repo --body "ana,luis"`.
 - Permisos del workflow: `pull-requests: write`, `statuses: write` y `contents: write`. Este último solo lo necesita la variante bookmark; si solo usas el gate por PR, ponlo en `read`.
 
 ## Código de ejemplo
