@@ -91,8 +91,9 @@ JSON
 
 ## Código de ejemplo
 
-`src/carrito.py` y `tests/test_carrito.py` están para tener algo que cambiar en la demo:
+`src/checkout` es un servicio de checkout pequeño pero realista, para que la demo tenga algo con miga que cambiar: cupones que se acumulan con tope, importes fijos prorrateados entre líneas, IVA por país y categoría (Canarias sin IVA), redondeo con `Decimal` y envío por peso y zona.
 
 ```bash
-python3 -m unittest discover -s tests -v
+pip install pytest && pytest -q
+PYTHONPATH=src python3 -m checkout ejemplos/pedido.json
 ```

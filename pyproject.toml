@@ -1,0 +1,9 @@
+[project]
+name = "checkout"
+version = "0.1.0"
+description = "Servicio de checkout de ejemplo para la demo del comprehension gate"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
