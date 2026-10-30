@@ -1,3 +1,27 @@
+# comprehension-gate: variante bookmark
+
+Estás en la rama `bookmark`. La idea general y la instalación están en el [README de main](../../tree/main#readme); aquí solo lo que cambia.
+
+El gate por PR pregunta por el diff de tu PR. Pero tu deuda cognitiva no es solo tu PR: es todo lo que ha cambiado en el código desde la última vez que lo entendiste, incluidos los cambios de tus compañeros (y de sus agentes).
+
+Esta variante guarda un bookmark por persona: el último commit que demostró entender.
+
+- Los bookmarks viven en la rama huérfana [`comprehension-bookmarks`](../../tree/comprehension-bookmarks), un fichero por persona en `bookmarks/<login>.json` con el SHA, la fecha y la PR.
+- Al abrir una PR, el gate compara el bookmark del autor con el head de la PR y pregunta por todo ese rango. Si el autor no tiene bookmark, usa la base de la PR.
+- Al aprobar, el workflow mueve el bookmark del autor al head de la PR.
+- Solo responde el autor de la PR, porque el bookmark es suyo.
+
+En este repo las PRs contra la rama `bookmark` usan este modo automáticamente. En un repo propio, activa el modo con la variable `GATE_MODE`:
+
+```bash
+gh variable set GATE_MODE -R mi-org/mi-repo --body bookmark
+git switch --orphan comprehension-bookmarks && git commit --allow-empty -m "bookmarks" && git push origin comprehension-bookmarks
+```
+
+El workflow necesita `contents: write` para escribir en `comprehension-bookmarks`. Si proteges esa rama, deja que `github-actions` pueda escribir en ella.
+
+---
+
 # comprehension-gate
 
 No mergeas lo que no entiendes.
