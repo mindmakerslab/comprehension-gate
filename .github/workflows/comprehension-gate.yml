@@ -20,14 +20,16 @@ concurrency:
 jobs:
   gate:
     # Solo actúa en PRs de alguien de GATE_USERS (lista separada por comas) y, en
-    # issue_comment, solo si también comenta alguien de la lista. En un repo público
+    # issue_comment, solo si también comenta alguien de la lista. Las PRs que abre el
+    # agente (agent-pr.yml, autor github-actions[bot]) se aceptan y van en modo merger. En un repo público
     # evita que cualquiera gaste la API. Fuera de la lista no se publica ningún status.
     if: >-
       (github.event_name == 'pull_request' &&
        contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.pull_request.user.login))) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
        github.event.comment.user.type != 'Bot' &&
-       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.issue.user.login)) &&
+       (github.event.issue.user.login == 'github-actions[bot]' ||
+        contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.issue.user.login))) &&
        contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.comment.user.login)))
     runs-on: ubuntu-latest
     timeout-minutes: 10

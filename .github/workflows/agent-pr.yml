@@ -1,0 +1,76 @@
+name: agent-pr
+
+# Etiquetar un issue con `agent` lanza Claude Code en el runner: implementa el issue,
+# pasa los tests y abre una PR como github-actions[bot]. Es el ejemplo del modo merger:
+# la PR la escribe un agente y el examinado es quien la va a mergear.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  statuses: write
+
+jobs:
+  implement:
+    if: >-
+      github.event.label.name == 'agent' &&
+      contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.sender.login))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest && npm install -g @anthropic-ai/claude-code
+      - name: Claude implementa el issue
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          # Sin credencial de Anthropic, Claude Code puede ir por OpenRouter.
+          if [ -z "$ANTHROPIC_API_KEY$CLAUDE_CODE_OAUTH_TOKEN" ] && [ -n "$OPENROUTER_API_KEY" ]; then
+            export ANTHROPIC_BASE_URL=https://openrouter.ai/api ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY" ANTHROPIC_API_KEY=""
+            export ANTHROPIC_MODEL="anthropic/claude-sonnet-4.5" ANTHROPIC_SMALL_FAST_MODEL="anthropic/claude-haiku-4.5"
+          fi
+          printf 'Implementa este issue en el repo actual (servicio de checkout en src/checkout, tests en tests/).\n\nTítulo: %s\n\n%s\n\nAñade o ajusta tests y deja `pytest -q` en verde. No toques .github/. No hagas commit.' \
+            "$ISSUE_TITLE" "$ISSUE_BODY" > /tmp/prompt.txt
+          claude -p --permission-mode acceptEdits --allowedTools "Read,Edit,Write,Glob,Grep,Bash(pytest*),Bash(python*)" < /tmp/prompt.txt
+          pytest -q
+      - name: Abrir la PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          N: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "agent/issue-$N"
+          git add -A -- . ':!.github'
+          git commit -m "$ISSUE_TITLE (#$N)"
+          git push -f origin "agent/issue-$N"
+          url=$(gh pr create --base "${{ github.event.repository.default_branch }}" --head "agent/issue-$N" \
+            --title "$ISSUE_TITLE" --body "Implementado por Claude Code a partir del issue #$N. Closes #$N")
+          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
+      # Una PR creada con GITHUB_TOKEN no dispara `pull_request`: llamamos al gate a mano.
+      - name: Comprehension gate sobre la PR del agente
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GATE_MODEL: ${{ vars.GATE_MODEL }}
+          GATE_TARGET: merger
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}" \
+            | python3 -c 'import json,sys; print(json.dumps({"pull_request": json.load(sys.stdin)}))' > /tmp/event.json
+          GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH=/tmp/event.json python3 .github/scripts/gate.py

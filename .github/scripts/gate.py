@@ -292,13 +292,23 @@ def pr_diff(pr, base=None):
 def resolve_mode(pr):
     """GATE_MODE manda. Si no está, las PRs contra la rama `bookmark` usan la variante 2."""
     global MODE
+    PR.clear()
+    PR.update(pr)
     bases = (os.environ.get("GATE_BOOKMARK_BASES") or "bookmark").split(",")
     MODE = os.environ.get("GATE_MODE") or ("bookmark" if pr["base"]["ref"] in bases else "pr")
     print(f"Modo: {MODE}")
 
 
+PR = {}
+
+
 def target():
-    """A quién se examina. author: quien abre la PR. merger: cualquiera con permiso write."""
+    """A quién se examina. author: quien abre la PR. merger: cualquiera con permiso write.
+
+    Si la PR la abrió un bot (un agente), no hay autor humano al que examinar: merger.
+    """
+    if (PR.get("user") or {}).get("type") == "Bot":
+        return "merger"
     return os.environ.get("GATE_TARGET") or ("merger" if MODE == "bookmark" else "author")
 
 
@@ -350,7 +360,12 @@ de la respuesta."""
     else:
         raise RuntimeError(f"El modelo no devolvió 3 preguntas: {out}")
     qs = qs[:3]
-    quien = "Antes de mergear, contesta" if login == "*" else f"@{login}, antes de mergear contesta"
+    if login != "*":
+        quien = f"@{login}, antes de mergear contesta"
+    elif target() == "merger":
+        quien = "Quien vaya a mergear (con permiso de escritura), contesta"
+    else:
+        quien = "Antes de mergear, contesta"
     body = (
         f"### Comprehension gate\n\n{out['resumen']}\n\n"
         f"{quien} en un comentario a estas preguntas con tus palabras:\n\n{numbered(qs)}\n\n"
