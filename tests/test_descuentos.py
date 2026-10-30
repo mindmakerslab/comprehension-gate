@@ -56,3 +56,20 @@ def test_no_acumulable_gana_el_mejor(carrito_mixto):
 
 def test_envio_gratis(carrito_mixto):
     assert descuentos.aplicar(carrito_mixto, ["ENVIOGRATIS"]).envio_gratis
+
+
+def test_comida10_solo_alimentacion(cafe, libro):
+    c = Carrito().anadir(cafe, 2).anadir(libro)  # 2 cafés (24.80) + 1 libro (24.00)
+    r = descuentos.aplicar(c, ["COMIDA10"])
+    # Descuento 10% solo sobre café: 24.80 * 0.10 = 2.48
+    assert r.total == D("2.48")
+    assert r.aplicados == ["COMIDA10"]
+
+
+def test_comida10_acumulable_con_bienvenida(cafe):
+    c = Carrito().anadir(cafe, 2)  # 24.80 euros, alimentacion
+    r = descuentos.aplicar(c, ["BIENVENIDA10", "COMIDA10"])
+    # 1 - 0.9 x 0.9 = 19%
+    # 24.80 * 0.19 = 4.712 -> 4.71
+    assert r.total == D("4.71")
+    assert set(r.aplicados) == {"BIENVENIDA10", "COMIDA10"}

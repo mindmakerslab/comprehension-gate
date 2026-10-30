@@ -35,6 +35,7 @@ CATALOGO = {
         Cupon("BIENVENIDA10", "porcentaje", euros("0.10")),
         Cupon("VIP20", "porcentaje", euros("0.20"), minimo=euros("40")),
         Cupon("LIBROS15", "porcentaje", euros("0.15"), categoria="libros"),
+        Cupon("COMIDA10", "porcentaje", euros("0.10"), categoria="alimentacion"),
         Cupon("MENOS5", "fijo", euros("5"), minimo=euros("30")),
         Cupon("ENVIOGRATIS", "envio_gratis"),
         Cupon("FLASH40", "porcentaje", euros("0.40"), acumulable=False),
