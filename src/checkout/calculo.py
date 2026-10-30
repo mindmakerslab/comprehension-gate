@@ -32,7 +32,7 @@ def calcular_pedido(carrito: Carrito, direccion: Direccion, cupones: list[str] |
         ))
 
     base_productos = sum((l.base for l in lineas), CERO)
-    coste_envio = CERO if desc.envio_gratis else envio.coste(direccion, carrito.peso, base_productos)
+    coste_envio = CERO if desc.envio_gratis else envio.coste(direccion, carrito.peso, carrito.subtotal)
     iva_envio = iva.cuota(coste_envio, region, iva.CATEGORIA_ENVIO)
 
     base_imponible = base_productos + coste_envio
