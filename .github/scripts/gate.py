@@ -291,8 +291,13 @@ Respuesta de @{user}:
 Decide si la respuesta demuestra que entiende el cambio. Exige que conteste a todas las
 preguntas, que sea correcta según el diff y que muestre el porqué, no solo el qué. No exijas
 redacción perfecta ni longitud: una respuesta breve y correcta aprueba; una vaga, evasiva,
-incorrecta o que no responde a alguna pregunta, no. Si no aprueba, explica qué falta sin dar
-la respuesta y repregunta solo sobre lo que falló."""
+incorrecta o que no responde a alguna pregunta, no.
+
+Si no aprueba: el feedback dice, pregunta por pregunta, si va bien o mal encaminada y qué tipo
+de cosa falta (por ejemplo "no explicas el porqué" o "revisa en qué momento se compara con el
+umbral"), pero NUNCA revela la respuesta correcta, ni valores, ni nombres de variables o líneas que
+la contengan. Si revelas la respuesta, el gate deja de servir. Las nuevas preguntas atacan lo
+mismo desde otro ángulo, sin pistas. Si aprueba, el feedback es una o dos frases."""
     v = call_llm(prompt, VERDICT_TOOL)
     if v.get("aprobado") in (True, "true", "True"):
         body = (f"### Comprehension gate: aprobado\n\n@{user} {v['feedback']}\n\n"
