@@ -1,4 +1,4 @@
-# pr-comprehension-gate
+# comprehension-gate
 
 No mergeas lo que no entiendes.
 
@@ -14,10 +14,20 @@ Este repo es una plantilla que convierte esa idea en un check de GitHub:
 
 No sustituye a la code review. Es la parte que un agente no puede hacer por ti: entender lo que vas a firmar.
 
+## Variantes
+
+Cada variante vive en una rama de este repo:
+
+- [`main`](../../tree/main): gate por PR. Pregunta por el diff de la PR. Es esta.
+- [`bookmark`](../../tree/bookmark): bookmark de entendimiento. Cada persona tiene guardado el último commit que demostró entender, y el gate pregunta por todo lo que ha cambiado desde ahí, incluidos los cambios de otros. Mide tu deuda cognitiva acumulada, no solo la de tu PR.
+- [`hooks`](../../tree/hooks): la misma idea sin GitHub Actions, como comando local de git que usa `claude -p` con tu suscripción.
+
+Los pasos para enseñarlo en directo están en [DEMO.md](DEMO.md).
+
 ## Usar la plantilla
 
 ```bash
-gh repo create mi-org/mi-repo --private --template double-thinker/pr-comprehension-gate
+gh repo create mi-org/mi-repo --private --template double-thinker/comprehension-gate
 ```
 
 O copia a un repo existente estos dos ficheros:
@@ -25,15 +35,24 @@ O copia a un repo existente estos dos ficheros:
 - `.github/workflows/comprehension-gate.yml`
 - `.github/scripts/gate.py` (Python estándar, sin dependencias)
 
-## Configurar el secret
+## Configurar el modelo
 
-Con la API de Anthropic:
+El gate acepta tres credenciales y usa la primera que encuentre:
 
-```bash
-gh secret set ANTHROPIC_API_KEY -R mi-org/mi-repo
-```
+1. `CLAUDE_CODE_OAUTH_TOKEN`: tu suscripción de Claude Code, sin pagar API aparte. El workflow instala el CLI en el runner y llama a `claude -p`.
 
-Como alternativa acepta `OPENROUTER_API_KEY`. Si están los dos, usa Anthropic.
+   ```bash
+   claude setup-token        # abre el navegador y devuelve un token sk-ant-oat...
+   gh secret set CLAUDE_CODE_OAUTH_TOKEN -R mi-org/mi-repo   # pega el token cuando lo pida
+   ```
+
+2. `ANTHROPIC_API_KEY`: la API de Anthropic directa.
+
+   ```bash
+   gh secret set ANTHROPIC_API_KEY -R mi-org/mi-repo
+   ```
+
+3. `OPENROUTER_API_KEY`: OpenRouter, por si es lo que tienes a mano.
 
 El modelo se elige con la variable `GATE_MODEL` (por defecto `claude-sonnet-4-5`):
 

@@ -8,11 +8,17 @@ Eventos:
     evalúa su respuesta contra las últimas preguntas del head SHA actual y pone
     el status en success o failure (con feedback y nuevas preguntas).
 
-Solo usa la librería estándar. Proveedor de LLM:
-  ANTHROPIC_API_KEY  -> API de Anthropic directa (preferido)
-  OPENROUTER_API_KEY -> OpenRouter como alternativa
+Solo usa la librería estándar. Proveedor de LLM, en este orden:
+  CLAUDE_CODE_OAUTH_TOKEN -> CLI `claude -p` con la suscripción de Claude Code
+  ANTHROPIC_API_KEY       -> API de Anthropic directa
+  OPENROUTER_API_KEY      -> OpenRouter como alternativa
 Modelo: variable GATE_MODEL (por defecto claude-sonnet-4-5).
+
+GATE_MODE=bookmark (variante 2): en vez del diff de la PR, pregunta por todo lo que ha
+cambiado desde el último commit que el autor demostró entender (su bookmark, guardado en la
+rama huérfana `comprehension-bookmarks`). Al aprobar, mueve el bookmark al head de la PR.
 """
+import subprocess
 import base64
 import json
 import os
@@ -30,6 +36,8 @@ GH_API = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 REPO = os.environ["GITHUB_REPOSITORY"]
 GH_TOKEN = os.environ["GITHUB_TOKEN"]
 MODEL = os.environ.get("GATE_MODEL") or "claude-sonnet-4-5"
+MODE = os.environ.get("GATE_MODE") or "pr"
+BOOKMARK_BRANCH = "comprehension-bookmarks"
 
 
 # ---------------------------------------------------------------- GitHub
@@ -93,9 +101,12 @@ QUESTIONS_TOOL = {
         "type": "object",
         "properties": {
             "resumen": {"type": "string", "description": "Una frase neutra sobre qué toca la PR, sin revelar las respuestas."},
-            "preguntas": {"type": "array", "items": {"type": "string"}, "minItems": 3, "maxItems": 3},
+            # Campos planos en vez de un array: algunos proveedores serializan mal los arrays.
+            "pregunta_1": {"type": "string", "description": "Qué hace el cambio y por qué de esa forma."},
+            "pregunta_2": {"type": "string", "description": "Riesgos o efectos laterales."},
+            "pregunta_3": {"type": "string", "description": "Escenario ¿qué pasaría si...? con un caso límite real."},
         },
-        "required": ["resumen", "preguntas"],
+        "required": ["resumen", "pregunta_1", "pregunta_2", "pregunta_3"],
     },
 }
 
@@ -107,12 +118,11 @@ VERDICT_TOOL = {
         "properties": {
             "aprobado": {"type": "boolean"},
             "feedback": {"type": "string", "description": "Qué está bien y qué falta, pregunta por pregunta, breve."},
-            "nuevas_preguntas": {
-                "type": "array", "items": {"type": "string"},
-                "description": "Si no aprueba: 1 a 3 preguntas para repreguntar sobre lo que falló. Vacío si aprueba.",
-            },
+            "repregunta_1": {"type": "string", "description": "Si no aprueba: pregunta sobre lo que falló. Vacío si aprueba."},
+            "repregunta_2": {"type": "string", "description": "Opcional. Vacío si no hace falta."},
+            "repregunta_3": {"type": "string", "description": "Opcional. Vacío si no hace falta."},
         },
-        "required": ["aprobado", "feedback", "nuevas_preguntas"],
+        "required": ["aprobado", "feedback", "repregunta_1"],
     },
 }
 
@@ -124,6 +134,20 @@ SYSTEM = (
 
 
 def call_llm(prompt, tool):
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        cmd = ["claude", "-p", "--output-format", "json", "--json-schema", json.dumps(tool["input_schema"]),
+               "--system-prompt", SYSTEM, "--tools", "", "--model", MODEL, "--no-session-persistence"]
+        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError(f"claude -p falló: {r.stderr[-500:]}")
+        out = json.loads(r.stdout)
+        if out.get("structured_output"):
+            return out["structured_output"]
+        m = re.search(r"\{.*\}", out.get("result") or "", re.S)
+        if m:
+            return json.loads(m.group(0))
+        raise RuntimeError(f"claude -p sin JSON: {out.get('result')}")
+
     if os.environ.get("ANTHROPIC_API_KEY"):
         body = {
             "model": MODEL, "max_tokens": 2000, "system": SYSTEM,
@@ -166,7 +190,7 @@ def call_llm(prompt, tool):
             return json.loads(m.group(0))
         raise RuntimeError(f"Respuesta sin JSON: {resp}")
 
-    raise RuntimeError("Falta ANTHROPIC_API_KEY (o OPENROUTER_API_KEY) en los secrets del repo.")
+    raise RuntimeError("Falta CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY u OPENROUTER_API_KEY en los secrets del repo.")
 
 
 # --------------------------------------------------------------- Marcas
@@ -184,7 +208,7 @@ MARK_RE = re.compile(r"<!-- (comprehension-gate:\w+) sha=([0-9a-f]+) data=([A-Za
 
 def latest_state(comments, sha):
     """Devuelve (preguntas, aprobado) según el último comentario del bot para este SHA."""
-    questions, approved = None, False
+    questions, approved, base = None, False, None
     for c in comments:
         for kind, s, data in MARK_RE.findall(c.get("body") or ""):
             if s != sha:
@@ -192,9 +216,10 @@ def latest_state(comments, sha):
             payload = json.loads(base64.b64decode(data))
             if kind == MARK_Q:
                 questions, approved = payload["preguntas"], False
+                base = payload.get("base") or base
             elif kind == MARK_V and payload.get("aprobado"):
                 approved = True
-    return questions, approved
+    return questions, approved, base
 
 
 def as_list(value):
@@ -209,14 +234,49 @@ def as_list(value):
     return []
 
 
+def fields(out, prefix):
+    return [str(out[k]).strip() for k in (f"{prefix}_{i}" for i in (1, 2, 3)) if str(out.get(k) or "").strip()]
+
+
 def numbered(qs):
     return "\n".join(f"{i}. {q}" for i, q in enumerate(qs, 1))
 
 
 # --------------------------------------------------------------- Flujos
 
-def pr_diff(pr_number):
-    diff = gh("GET", f"/repos/{REPO}/pulls/{pr_number}", accept="application/vnd.github.v3.diff")
+def read_bookmark(login):
+    try:
+        f = gh("GET", f"/repos/{REPO}/contents/bookmarks/{login}.json?ref={BOOKMARK_BRANCH}")
+    except RuntimeError:
+        return None, None
+    return json.loads(base64.b64decode(f["content"])), f["sha"]
+
+
+def write_bookmark(login, sha, pr_number):
+    data = {"login": login, "sha": sha, "pr": pr_number, "fecha": __import__("datetime").datetime.utcnow().isoformat() + "Z"}
+    _, blob = read_bookmark(login)
+    body = {"message": f"bookmark: {login} entiende {sha[:7]} (PR #{pr_number})", "branch": BOOKMARK_BRANCH,
+            "content": base64.b64encode((json.dumps(data, indent=2) + "\n").encode()).decode()}
+    if blob:
+        body["sha"] = blob
+    gh("PUT", f"/repos/{REPO}/contents/bookmarks/{login}.json", body)
+
+
+def diff_range(pr):
+    """Devuelve (base, descripción) del rango sobre el que se pregunta."""
+    if MODE == "bookmark":
+        bm, _ = read_bookmark(pr["user"]["login"])
+        if bm:
+            return bm["sha"], f"desde tu bookmark `{bm['sha'][:7]}` (PR #{bm.get('pr')})"
+        return pr["base"]["sha"], "sin bookmark previo: desde la base de la PR"
+    return pr["base"]["sha"], "diff de la PR"
+
+
+def pr_diff(pr, base=None):
+    if base:
+        diff = gh("GET", f"/repos/{REPO}/compare/{base}...{pr['head']['sha']}", accept="application/vnd.github.v3.diff")
+    else:
+        diff = gh("GET", f"/repos/{REPO}/pulls/{pr['number']}", accept="application/vnd.github.v3.diff")
     if len(diff) > MAX_DIFF:
         diff = diff[:MAX_DIFF] + "\n\n[diff truncado]"
     return diff
@@ -226,10 +286,16 @@ def on_pull_request(event):
     pr = event["pull_request"]
     sha, num = pr["head"]["sha"], pr["number"]
     set_status(sha, "pending", "Generando preguntas sobre el cambio...")
-    diff = pr_diff(num)
+    base, scope = diff_range(pr)
+    diff = pr_diff(pr, base if MODE == "bookmark" else None)
+    extra = ""
+    if MODE == "bookmark":
+        extra = ("\nEl diff no es solo esta PR: es todo lo que ha cambiado en el código desde el último commit "
+                 "que el autor demostró entender, incluidos cambios de otras personas. Reparte las preguntas "
+                 "entre las partes más importantes de ese cambio acumulado, no solo las de esta PR.\n")
     prompt = f"""Título de la PR: {pr['title']}
 Descripción: {pr.get('body') or '(sin descripción)'}
-
+{extra}
 Diff:
 ```diff
 {diff}
@@ -240,15 +306,19 @@ alguien que lo ha leído y entendido. Cubre: qué hace y por qué de esa forma, 
 laterales, y un escenario "¿qué pasaría si...?" con un caso límite real del diff. Cita nombres de
 funciones, ficheros o valores concretos. Nada de preguntas genéricas ni de sí/no. No des pistas
 de la respuesta."""
-    out = call_llm(prompt, QUESTIONS_TOOL)
-    qs = as_list(out.get("preguntas"))[:3]
-    if len(qs) < 3:
+    for _ in range(3):
+        out = call_llm(prompt, QUESTIONS_TOOL)
+        qs = fields(out, "pregunta") or as_list(out.get("preguntas"))
+        if len(qs) >= 3:
+            break
+    else:
         raise RuntimeError(f"El modelo no devolvió 3 preguntas: {out}")
+    qs = qs[:3]
     body = (
         f"### Comprehension gate\n\n{out['resumen']}\n\n"
         f"Antes de mergear, contesta en un comentario a estas preguntas con tus palabras:\n\n{numbered(qs)}\n\n"
-        f"Commit evaluado: `{sha[:7]}`. Un nuevo push invalida la aprobación y genera preguntas nuevas.\n\n"
-        + marker(MARK_Q, sha, {"preguntas": qs})
+        f"Commit evaluado: `{sha[:7]}`, {scope}. Un nuevo push invalida la aprobación y genera preguntas nuevas.\n\n"
+        + marker(MARK_Q, sha, {"preguntas": qs, "base": base})
     )
     c = comment(num, body)
     set_status(sha, "pending", "Esperando respuestas del autor", c["html_url"])
@@ -265,19 +335,21 @@ def on_issue_comment(event):
     if pr["state"] != "open":
         return print("PR cerrada.")
     user = cmt["user"]["login"]
+    if MODE == "bookmark" and user != pr["user"]["login"]:
+        return print("En modo bookmark solo responde el autor de la PR (el bookmark es suyo).")
     if not can_answer(user, pr):
         return print(f"{user} no es el autor ni tiene permiso de escritura; se ignora.")
     sha = pr["head"]["sha"]
-    questions, approved = latest_state(list_comments(num), sha)
+    questions, approved, base = latest_state(list_comments(num), sha)
     if approved:
         return print("Ya aprobado para este SHA.")
     if not questions:
         return print("No hay preguntas para el head SHA actual (puede que aún se estén generando).")
 
     set_status(sha, "pending", f"Evaluando la respuesta de {user}...")
-    prompt = f"""Diff de la PR:
+    prompt = f"""Diff sobre el que se preguntó:
 ```diff
-{pr_diff(num)}
+{pr_diff(pr, base if MODE == "bookmark" else None)}
 ```
 
 Preguntas planteadas:
@@ -304,9 +376,11 @@ mismo desde otro ángulo, sin pistas. Si aprueba, el feedback es una o dos frase
                 f"Check `{CONTEXT}` en verde para `{sha[:7]}`.\n\n"
                 + marker(MARK_V, sha, {"aprobado": True}))
         c = comment(num, body)
+        if MODE == "bookmark":
+            write_bookmark(user, sha, num)
         set_status(sha, "success", f"{user} demuestra que entiende el cambio", c["html_url"])
     else:
-        nq = (as_list(v.get("nuevas_preguntas")) or questions)[:3]
+        nq = (fields(v, "repregunta") or questions)[:3]
         body = (f"### Comprehension gate: todavía no\n\n@{user} {v['feedback']}\n\n"
                 f"Contesta de nuevo en otro comentario:\n\n{numbered(nq)}\n\n"
                 + marker(MARK_V, sha, {"aprobado": False}) + "\n" + marker(MARK_Q, sha, {"preguntas": nq}))
