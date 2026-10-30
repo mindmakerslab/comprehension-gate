@@ -277,6 +277,11 @@ def pr_diff(pr, base=None):
         diff = gh("GET", f"/repos/{REPO}/compare/{base}...{pr['head']['sha']}", accept="application/vnd.github.v3.diff")
     else:
         diff = gh("GET", f"/repos/{REPO}/pulls/{pr['number']}", accept="application/vnd.github.v3.diff")
+    # Los ficheros del propio gate no cuentan como código a entender.
+    ignore = tuple(x for x in (os.environ.get("GATE_IGNORE") or ".github/").split(",") if x)
+    parts = re.split(r"(?m)^(?=diff --git )", diff)
+    diff = "".join(p for p in parts if not re.match(r"diff --git a/(\S+)", p) or
+                   not re.match(r"diff --git a/(\S+)", p).group(1).startswith(ignore))
     if len(diff) > MAX_DIFF:
         diff = diff[:MAX_DIFF] + "\n\n[diff truncado]"
     return diff
