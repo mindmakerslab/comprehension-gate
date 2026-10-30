@@ -2,7 +2,7 @@
 from decimal import Decimal
 
 from . import descuentos, envio, iva
-from .dinero import CERO, redondear
+from .dinero import CERO, prorratear, redondear
 from .modelos import Carrito, Direccion, LineaFactura, Pedido
 
 
@@ -33,7 +33,10 @@ def calcular_pedido(carrito: Carrito, direccion: Direccion, cupones: list[str] |
 
     base_productos = sum((l.base for l in lineas), CERO)
     coste_envio = CERO if desc.envio_gratis else envio.coste(direccion, carrito.peso, carrito.subtotal)
-    iva_envio = iva.cuota(coste_envio, region, iva.CATEGORIA_ENVIO)
+    # El envío es un servicio accesorio: sigue el IVA de lo que transporta. Con productos de
+    # varios tipos, se reparte en proporción a la base de cada línea.
+    partes_envio = prorratear(coste_envio, [l.base for l in lineas])
+    iva_envio = sum((iva.cuota(parte, region, l.categoria) for parte, l in zip(partes_envio, lineas)), CERO)
 
     base_imponible = base_productos + coste_envio
     cuota_total = sum((l.iva for l in lineas), CERO) + iva_envio

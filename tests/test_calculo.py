@@ -27,10 +27,18 @@ def test_iva_sobre_base_descontada(libro, madrid):
     assert linea.iva == D("0.82")  # 4 % de 20,40
 
 
-def test_envio_lleva_iva(cafe, madrid):
+def test_envio_lleva_iva_de_lo_que_transporta(cafe, madrid):
     p = calcular_pedido(Carrito().anadir(cafe), madrid)
-    # 3,95 + 21 % = 4,78
-    assert p.envio == D("4.78")
+    # Solo alimentación: 3,95 + 10 % = 4,35
+    assert p.envio == D("4.35")
+
+
+def test_envio_iva_prorrateado(cafe):
+    from checkout.modelos import producto
+    taza = producto("TAZ-01", "Taza", "12.40", "0.4")
+    p = calcular_pedido(Carrito().anadir(cafe).anadir(taza), Direccion("ES", "28004"))
+    # 3,95 a medias: 1,97 al 10 % (0,20) y 1,98 al 21 % (0,42)
+    assert p.envio == D("3.95") + D("0.62")
 
 
 def test_canarias_sin_iva(molinillo):
