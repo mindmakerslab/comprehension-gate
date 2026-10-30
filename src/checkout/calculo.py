@@ -37,6 +37,10 @@ def calcular_pedido(carrito: Carrito, direccion: Direccion, cupones: list[str] |
 
     base_imponible = base_productos + coste_envio
     cuota_total = sum((l.iva for l in lineas), CERO) + iva_envio
+    total = base_imponible + cuota_total
+    if desc.sobre_total:
+        # Cupones "sobre el precio final": se aplican al total ya con IVA y envío.
+        total = redondear(total * (1 - desc.sobre_total))
     return Pedido(
         lineas=lineas,
         cupones_aplicados=desc.aplicados,
@@ -45,7 +49,7 @@ def calcular_pedido(carrito: Carrito, direccion: Direccion, cupones: list[str] |
         base_imponible=base_imponible,
         iva=cuota_total,
         envio=redondear(coste_envio + iva_envio),
-        total=base_imponible + cuota_total,
+        total=total,
         avisos=desc.avisos,
     )
 

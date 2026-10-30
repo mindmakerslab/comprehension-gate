@@ -49,3 +49,10 @@ def test_cli_json(capsys):
     assert main([str(ejemplo), "--json"]) == 0
     salida = json.loads(capsys.readouterr().out)
     assert salida["total"] == "84.80"
+
+
+def test_black_friday_sobre_precio_final(carrito_mixto, madrid):
+    p = calcular_pedido(carrito_mixto, madrid, ["BIENVENIDA10", "BF15"])
+    sin_bf = calcular_pedido(carrito_mixto, madrid, ["BIENVENIDA10"])
+    assert p.total == (sin_bf.total * D("0.85")).quantize(D("0.01"))
+    assert "BF15" in p.cupones_aplicados

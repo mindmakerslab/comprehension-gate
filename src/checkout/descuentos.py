@@ -23,7 +23,7 @@ TOPE_PORCENTAJE = Decimal("0.30")
 @dataclass(frozen=True)
 class Cupon:
     codigo: str
-    tipo: str  # "porcentaje", "fijo" o "envio_gratis"
+    tipo: str  # "porcentaje", "fijo", "envio_gratis" o "sobre_total"
     valor: Decimal = CERO
     minimo: Decimal = CERO
     acumulable: bool = True
@@ -38,6 +38,8 @@ CATALOGO = {
         Cupon("MENOS5", "fijo", euros("5"), minimo=euros("30")),
         Cupon("ENVIOGRATIS", "envio_gratis"),
         Cupon("FLASH40", "porcentaje", euros("0.40"), acumulable=False),
+        # Black Friday: se anuncia como "15 % sobre el precio final", así que va sobre el total con IVA.
+        Cupon("BF15", "sobre_total", euros("0.15")),
     ]
 }
 
@@ -47,6 +49,7 @@ class ResultadoDescuentos:
     por_linea: list[Decimal]
     aplicados: list[str]
     envio_gratis: bool = False
+    sobre_total: Decimal = CERO
     avisos: list[str] = field(default_factory=list)
 
     @property
@@ -118,5 +121,6 @@ def aplicar(carrito: Carrito, codigos: list[str]) -> ResultadoDescuentos:
         por_linea=_simular(carrito, validos),
         aplicados=[c.codigo for c in validos],
         envio_gratis=any(c.tipo == "envio_gratis" for c in validos),
+        sobre_total=sum((c.valor for c in validos if c.tipo == "sobre_total"), CERO),
         avisos=avisos,
     )
