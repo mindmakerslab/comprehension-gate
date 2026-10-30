@@ -206,20 +206,28 @@ def marker(kind, sha, data):
 MARK_RE = re.compile(r"<!-- (comprehension-gate:\w+) sha=([0-9a-f]+) data=([A-Za-z0-9+/=]+) -->")
 
 
-def latest_state(comments, sha):
-    """Devuelve (preguntas, aprobado) según el último comentario del bot para este SHA."""
-    questions, approved, base = None, False, None
+def latest_state(comments, sha, user):
+    """(preguntas, aprobado, base) para `user` en este SHA.
+
+    Aprobado si alguien ya aprobó este SHA. Preguntas: las últimas dirigidas a `user`
+    o, si no hay, las últimas para cualquiera ('*').
+    """
+    mine, anyone, approved = None, None, False
     for c in comments:
         for kind, s, data in MARK_RE.findall(c.get("body") or ""):
             if s != sha:
                 continue
             payload = json.loads(base64.b64decode(data))
             if kind == MARK_Q:
-                questions, approved = payload["preguntas"], False
-                base = payload.get("base") or base
+                para = payload.get("para", "*")
+                if para == user:
+                    mine = payload
+                elif para == "*":
+                    anyone = payload
             elif kind == MARK_V and payload.get("aprobado"):
                 approved = True
-    return questions, approved, base
+    q = mine or anyone
+    return (q["preguntas"], approved, q.get("base")) if q else (None, approved, None)
 
 
 def as_list(value):
@@ -262,16 +270,6 @@ def write_bookmark(login, sha, pr_number):
     gh("PUT", f"/repos/{REPO}/contents/bookmarks/{login}.json", body)
 
 
-def diff_range(pr):
-    """Devuelve (base, descripción) del rango sobre el que se pregunta."""
-    if MODE == "bookmark":
-        bm, _ = read_bookmark(pr["user"]["login"])
-        if bm:
-            return bm["sha"], f"desde tu bookmark `{bm['sha'][:7]}` (PR #{bm.get('pr')})"
-        return pr["base"]["sha"], "sin bookmark previo: desde la base de la PR"
-    return pr["base"]["sha"], "diff de la PR"
-
-
 def pr_diff(pr, base=None):
     if base:
         diff = gh("GET", f"/repos/{REPO}/compare/{base}...{pr['head']['sha']}", accept="application/vnd.github.v3.diff")
@@ -299,17 +297,37 @@ def resolve_mode(pr):
     print(f"Modo: {MODE}")
 
 
-def on_pull_request(event):
-    pr = event["pull_request"]
-    resolve_mode(pr)
+def target():
+    """A quién se examina. author: quien abre la PR. merger: cualquiera con permiso write."""
+    return os.environ.get("GATE_TARGET") or ("merger" if MODE == "bookmark" else "author")
+
+
+def diff_range(pr, login):
+    """Devuelve (base, descripción) del rango sobre el que se pregunta a `login`."""
+    if MODE == "bookmark":
+        bm, _ = read_bookmark(login)
+        if bm:
+            de = f" (PR #{bm['pr']})" if bm.get("pr") else ""
+            return bm["sha"], f"desde el bookmark de @{login} `{bm['sha'][:7]}`{de}"
+        return pr["base"]["sha"], f"@{login} no tiene bookmark: desde la base de la PR"
+    return pr["base"]["sha"], "diff de la PR"
+
+
+def ask(pr, login):
+    """Genera y publica preguntas. login='*' significa que vale para cualquiera."""
     sha, num = pr["head"]["sha"], pr["number"]
     set_status(sha, "pending", "Generando preguntas sobre el cambio...")
-    base, scope = diff_range(pr)
+    base, scope = diff_range(pr, login)
     diff = pr_diff(pr, base if MODE == "bookmark" else None)
+    if not diff.strip():
+        body = (f"### Comprehension gate: aprobado\n\nNo hay código nuevo que entender para @{login} "
+                f"entre `{base[:7]}` y `{sha[:7]}`.\n\n" + marker(MARK_V, sha, {"aprobado": True, "para": login}))
+        c = comment(num, body)
+        return set_status(sha, "success", "Nada nuevo que entender", c["html_url"])
     extra = ""
     if MODE == "bookmark":
         extra = ("\nEl diff no es solo esta PR: es todo lo que ha cambiado en el código desde el último commit "
-                 "que el autor demostró entender, incluidos cambios de otras personas. Reparte las preguntas "
+                 "que esta persona demostró entender, incluidos cambios de otras personas. Reparte las preguntas "
                  "entre las partes más importantes de ese cambio acumulado, no solo las de esta PR.\n")
     prompt = f"""Título de la PR: {pr['title']}
 Descripción: {pr.get('body') or '(sin descripción)'}
@@ -332,14 +350,29 @@ de la respuesta."""
     else:
         raise RuntimeError(f"El modelo no devolvió 3 preguntas: {out}")
     qs = qs[:3]
+    quien = "Antes de mergear, contesta" if login == "*" else f"@{login}, antes de mergear contesta"
     body = (
         f"### Comprehension gate\n\n{out['resumen']}\n\n"
-        f"Antes de mergear, contesta en un comentario a estas preguntas con tus palabras:\n\n{numbered(qs)}\n\n"
+        f"{quien} en un comentario a estas preguntas con tus palabras:\n\n{numbered(qs)}\n\n"
         f"Commit evaluado: `{sha[:7]}`, {scope}. Un nuevo push invalida la aprobación y genera preguntas nuevas.\n\n"
-        + marker(MARK_Q, sha, {"preguntas": qs, "base": base})
+        + marker(MARK_Q, sha, {"preguntas": qs, "base": base, "para": login})
     )
     c = comment(num, body)
-    set_status(sha, "pending", "Esperando respuestas del autor", c["html_url"])
+    set_status(sha, "pending", "Esperando respuestas", c["html_url"])
+
+
+def on_pull_request(event):
+    pr = event["pull_request"]
+    resolve_mode(pr)
+    if MODE == "bookmark" and target() == "merger":
+        # Cada persona tiene su bookmark: las preguntas se generan cuando alguien se ofrece a aprobar.
+        sha = pr["head"]["sha"]
+        c = comment(pr["number"], "### Comprehension gate\n\nPara aprobar esta PR, cualquier persona con permiso "
+                    "de escritura puede comentar (por ejemplo, `quiero aprobar`). Recibirá 3 preguntas sobre todo lo "
+                    "que ha cambiado desde su último bookmark. El check pasa cuando al menos una persona demuestra "
+                    f"que entiende el cambio. Commit: `{sha[:7]}`.")
+        return set_status(sha, "pending", "Esperando a que alguien con permiso write lo entienda", c["html_url"])
+    ask(pr, pr["user"]["login"] if MODE == "bookmark" else "*")
 
 
 def on_issue_comment(event):
@@ -354,15 +387,17 @@ def on_issue_comment(event):
         return print("PR cerrada.")
     resolve_mode(pr)
     user = cmt["user"]["login"]
-    if MODE == "bookmark" and user != pr["user"]["login"]:
-        return print("En modo bookmark solo responde el autor de la PR (el bookmark es suyo).")
-    if not can_answer(user, pr):
-        return print(f"{user} no es el autor ni tiene permiso de escritura; se ignora.")
+    if target() == "author" and user != pr["user"]["login"]:
+        return print(f"GATE_TARGET=author: solo cuenta el autor de la PR, no {user}.")
+    if target() == "merger" and not can_answer(user, pr):
+        return print(f"GATE_TARGET=merger: {user} no tiene permiso de escritura.")
     sha = pr["head"]["sha"]
-    questions, approved, base = latest_state(list_comments(num), sha)
+    questions, approved, base = latest_state(list_comments(num), sha, user)
     if approved:
         return print("Ya aprobado para este SHA.")
     if not questions:
+        if MODE == "bookmark" and target() == "merger":
+            return ask(pr, user)
         return print("No hay preguntas para el head SHA actual (puede que aún se estén generando).")
 
     set_status(sha, "pending", f"Evaluando la respuesta de {user}...")
@@ -402,7 +437,8 @@ mismo desde otro ángulo, sin pistas. Si aprueba, el feedback es una o dos frase
         nq = (fields(v, "repregunta") or questions)[:3]
         body = (f"### Comprehension gate: todavía no\n\n@{user} {v['feedback']}\n\n"
                 f"Contesta de nuevo en otro comentario:\n\n{numbered(nq)}\n\n"
-                + marker(MARK_V, sha, {"aprobado": False}) + "\n" + marker(MARK_Q, sha, {"preguntas": nq}))
+                + marker(MARK_V, sha, {"aprobado": False})
+                + "\n" + marker(MARK_Q, sha, {"preguntas": nq, "base": base, "para": user}))
         c = comment(num, body)
         set_status(sha, "failure", "La respuesta no demuestra comprensión del cambio", c["html_url"])
 
