@@ -11,7 +11,7 @@ class Tarifa:
     # (peso máximo en kg, precio sin IVA). El último tramo se repite por cada kg extra.
     tramos: tuple[tuple[Decimal, Decimal], ...]
     kg_extra: Decimal
-    gratis_desde: Decimal | None  # sobre la base tras descuentos, sin IVA
+    gratis_desde: Decimal | None  # sobre el subtotal antes de descuentos, sin IVA
 
 
 def _t(*tramos, extra, gratis):
@@ -42,10 +42,14 @@ def zona(direccion: Direccion) -> str:
     raise ValueError(f"Sin envío a {direccion.pais}")
 
 
-def coste(direccion: Direccion, peso_kg: Decimal, base_tras_descuentos: Decimal) -> Decimal:
-    """Coste de envío sin IVA."""
+def coste(direccion: Direccion, peso_kg: Decimal, subtotal: Decimal) -> Decimal:
+    """Coste de envío sin IVA.
+
+    El umbral de envío gratis se mira sobre el subtotal antes de cupones, que es lo
+    que el cliente ve en la barra de progreso del carrito.
+    """
     tarifa = TARIFAS[zona(direccion)]
-    if tarifa.gratis_desde is not None and base_tras_descuentos >= tarifa.gratis_desde:
+    if tarifa.gratis_desde is not None and subtotal >= tarifa.gratis_desde:
         return CERO
     for maximo, precio in tarifa.tramos:
         if peso_kg <= maximo:

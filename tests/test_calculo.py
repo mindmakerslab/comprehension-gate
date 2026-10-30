@@ -14,7 +14,7 @@ def test_pedido_completo(carrito_mixto, madrid):
     p = calcular_pedido(carrito_mixto, madrid, ["BIENVENIDA10", "MENOS5"])
     assert p.subtotal == D("88.70")
     assert p.descuentos == D("13.87")
-    assert p.envio == 0  # 74,83 de base supera los 50 de envío gratis
+    assert p.envio == 0  # 88,70 de subtotal supera los 50 de envío gratis
     assert p.iva == D("9.97")
     assert p.total == D("84.80")
     assert p.total == p.base_imponible + p.iva
@@ -49,3 +49,10 @@ def test_cli_json(capsys):
     assert main([str(ejemplo), "--json"]) == 0
     salida = json.loads(capsys.readouterr().out)
     assert salida["total"] == "84.80"
+
+
+def test_umbral_envio_antes_de_cupones(madrid):
+    from checkout.modelos import producto
+    c = Carrito().anadir(producto("MOL-02", "Molinillo", "52", "1.6"))
+    p = calcular_pedido(c, madrid, ["MENOS5"])  # 47 de base, pero 52 de subtotal
+    assert p.envio == 0
