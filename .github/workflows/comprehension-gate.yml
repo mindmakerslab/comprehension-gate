@@ -19,10 +19,16 @@ concurrency:
 
 jobs:
   gate:
-    # En issue_comment, solo comentarios en PRs y nunca de bots.
+    # Solo actúa en PRs de alguien de GATE_USERS (lista separada por comas) y, en
+    # issue_comment, solo si también comenta alguien de la lista. En un repo público
+    # evita que cualquiera gaste la API. Fuera de la lista no se publica ningún status.
     if: >-
-      github.event_name == 'pull_request' ||
-      (github.event.issue.pull_request && github.event.comment.user.type != 'Bot')
+      (github.event_name == 'pull_request' &&
+       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.pull_request.user.login))) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.issue.user.login)) &&
+       contains(format(',{0},', vars.GATE_USERS || 'double-thinker'), format(',{0},', github.event.comment.user.login)))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,4 +46,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GATE_MODEL: ${{ vars.GATE_MODEL }}
+          GATE_MODE: ${{ vars.GATE_MODE }}
+          GATE_TARGET: ${{ vars.GATE_TARGET }}
         run: python3 .github/scripts/gate.py
